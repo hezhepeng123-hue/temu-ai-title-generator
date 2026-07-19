@@ -1,0 +1,75 @@
+name: Build Windows APP Fixed
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "temu_ai_title_generator/temu_ai_title_generator.py"
+      - "temu_ai_title_generator/requirements.txt"
+      - ".github/workflows/build-windows-fixed.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: temu_ai_title_generator
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: temu_ai_title_generator/requirements.txt
+
+      - name: Install build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Validate source
+        shell: pwsh
+        run: |
+          python -m py_compile temu_ai_title_generator.py
+          python -c "import PIL, pydantic, openai; print('Dependencies OK')"
+
+      - name: Build single-file Windows APP
+        shell: pwsh
+        run: |
+          python -m PyInstaller `
+            --noconfirm `
+            --clean `
+            --onefile `
+            --windowed `
+            --name "AI_Title_Generator" `
+            --collect-all openai `
+            --collect-all pydantic `
+            --collect-all PIL `
+            temu_ai_title_generator.py
+
+      - name: Verify Windows APP
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "dist/AI_Title_Generator.exe")) {
+            throw "Windows APP was not generated"
+          }
+          Get-Item "dist/AI_Title_Generator.exe" | Format-List Name,Length,LastWriteTime
+
+      - name: Upload Windows APP
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI_Title_Generator_Windows
+          path: temu_ai_title_generator/dist/AI_Title_Generator.exe
+          if-no-files-found: error
+          retention-days: 30
