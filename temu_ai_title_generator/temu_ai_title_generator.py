@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 
 APP_TITLE = "AI商品标题生成器（火山方舟版）"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 DEFAULT_MODEL = "doubao-seed-2-0-pro-260215"
 VOLCANO_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 MAX_IMAGES = 6
@@ -32,8 +32,11 @@ class TitleItem(BaseModel):
 class TitleResult(BaseModel):
     product_name: str
     category: str
+    image_description: str = ""
     observed_features: list[str]
     manual_facts_used: list[str]
+    search_keywords: list[str] = Field(default_factory=list)
+    gift_keywords: list[str] = Field(default_factory=list)
     warnings: list[str]
     titles: list[TitleItem]
 
@@ -56,7 +59,13 @@ product titles for the selected marketplace. Follow these rules strictly:
 6. If the image may show a recognizable third-party character, logo, or protected design,
    describe it generically and add a warning instead of naming the IP.
 7. Make every title meaningfully different while preserving the same accurate product facts.
-8. Return structured data matching the requested schema.
+8. Describe the product image carefully: product type, visible colors, shape, pattern, design motif,
+   style, target audience, likely use scene, and gift occasion. Do not turn uncertain observations
+   into confirmed specifications.
+9. Suggest marketplace search phrases with strong purchase intent. These are AI keyword suggestions,
+   not claims of access to a live TEMU search ranking.
+10. Add only relevant gift-intent phrases. Never force an unrelated holiday, recipient, or occasion.
+11. Return structured data matching the requested schema.
 """.strip()
 
 
@@ -85,6 +94,7 @@ def build_user_prompt(settings: dict[str, str | int]) -> str:
         "other_facts": str(settings.get("other_facts", "")),
     }
     manual_facts = _flatten_manual_facts(manual_values)
+    target_keywords = str(settings.get("target_keywords", "")).strip()
 
     if language == "中英双语":
         language_rule = f"生成 {title_count} 条中文标题和 {title_count} 条英文标题。"
@@ -94,6 +104,7 @@ def build_user_prompt(settings: dict[str, str | int]) -> str:
         language_rule = f"生成 {title_count} 条中文标题。"
 
     facts_text = "\n".join(f"- {item}" for item in manual_facts) or "- 未提供；只能使用图片中可直接观察到的外观特征"
+    keyword_text = target_keywords or "未指定；请根据图片生成高购买意图的搜索关键词建议（不是实时热搜榜单）"
 
     return f"""
 请根据随附的同一商品图片生成跨境电商标题。
@@ -106,9 +117,19 @@ def build_user_prompt(settings: dict[str, str | int]) -> str:
 用户确认的信息：
 {facts_text}
 
+用户指定的TEMU关键词：
+{keyword_text}
+
 标题写法：
-- 核心品类放在前部，随后自然加入已确认属性、可见设计、适用人群、场景或礼物关键词。
+- 先详细观察图片，识别核心品类、颜色、造型、图案、设计元素、风格、适用人群和场景。
+- 核心品类放在前部，随后自然加入已确认属性、可见设计、适用人群、使用场景和礼物关键词。
 - 符合欧美买家的自然搜索习惯，不机械堆砌同义词。
+- 每条标题自然融入 2 至 4 个与图片高度相关的高购买意图搜索短语。
+- 每条标题自然融入 1 至 2 个真正相关的礼物意图词，例如 Gift for Her、Birthday Gift、
+  Anniversary Gift、Valentine's Day Gift、Mother's Day Gift 或 Christmas Gift；根据商品选择，
+  不得每条全部堆入，也不得强行加入不相关人群或节日。
+- 如果用户指定了TEMU关键词，优先使用其中与图片和确认事实相符的词；不相关的词必须忽略。
+- 不要在标题中使用 Hot Search、Trending、Viral、Best Seller 等无法证实的宣传词。
 - 标题之间应更换卖点排序和表达角度，但不得改变产品事实。
 - 标题中不要出现平台名称。
 - 未确认的材质、宝石、成分、数量、品牌、功效和认证不得写入标题。
@@ -119,8 +140,11 @@ JSON 必须使用下面的字段结构：
 {{
   "product_name": "商品概括",
   "category": "识别品类",
+  "image_description": "对图片中商品外观、设计、颜色、图案、风格、场景和人群的具体描述",
   "observed_features": ["图片中可直接观察到的特征"],
   "manual_facts_used": ["实际采用的用户确认信息"],
+  "search_keywords": ["与图片相关的TEMU高购买意图搜索词建议"],
+  "gift_keywords": ["与商品相关的礼物意图关键词"],
   "warnings": ["需要人工确认或可能存在的风险"],
   "titles": [{{"language": "中文或English", "title": "标题"}}]
 }}
@@ -221,6 +245,7 @@ class TitleGeneratorApp:
         self.brand_var = tk.StringVar(value="UBERTE")
         self.quantity_var = tk.StringVar()
         self.size_var = tk.StringVar()
+        self.keyword_var = tk.StringVar()
         self.status_var = tk.StringVar(value="请选择1至6张同一商品的图片")
         env_ready = bool(os.getenv("ARK_API_KEY", "").strip())
         self.key_status_var = tk.StringVar(
@@ -294,6 +319,12 @@ class TitleGeneratorApp:
         self._labeled_entry(facts_box, "品牌", self.brand_var, "不想写入标题可留空")
         self._labeled_entry(facts_box, "包装数量", self.quantity_var, "例如：2件装、6款不重复")
         self._labeled_entry(facts_box, "尺码/尺寸", self.size_var, "例如：S-2XL、主石1克拉")
+        self._labeled_entry(
+            facts_box,
+            "指定TEMU关键词（可选）",
+            self.keyword_var,
+            "可粘贴你查到的真实热搜词；留空则由AI根据图片建议",
+        )
 
         ttk.Label(facts_box, text="其他确定信息").pack(anchor="w", pady=(7, 2))
         self.other_text = tk.Text(facts_box, height=4, wrap="word", font=("Microsoft YaHei UI", 9))
@@ -346,7 +377,7 @@ class TitleGeneratorApp:
         summary_box.pack(fill=X, pady=(0, 10))
         self.summary_text = tk.Text(
             summary_box,
-            height=7,
+            height=10,
             wrap="word",
             font=("Microsoft YaHei UI", 9),
             state="disabled",
@@ -452,6 +483,7 @@ class TitleGeneratorApp:
             "brand": self.brand_var.get().strip(),
             "package_quantity": self.quantity_var.get().strip(),
             "size": self.size_var.get().strip(),
+            "target_keywords": self.keyword_var.get().strip(),
             "other_facts": self.other_text.get("1.0", END).strip(),
         }
 
@@ -499,8 +531,11 @@ class TitleGeneratorApp:
         summary_lines = [
             f"识别品类：{result.category}",
             f"商品概括：{result.product_name}",
+            f"图片描述：{result.image_description or '无'}",
             "可见特征：" + ("、".join(result.observed_features) or "无"),
             "已使用的人工确认信息：" + ("、".join(result.manual_facts_used) or "无"),
+            "TEMU搜索词建议（非实时榜单）：" + ("、".join(result.search_keywords) or "无"),
+            "礼物关键词：" + ("、".join(result.gift_keywords) or "无"),
             "需要确认：" + ("；".join(result.warnings) or "无"),
         ]
         self._set_summary("\n".join(summary_lines))
