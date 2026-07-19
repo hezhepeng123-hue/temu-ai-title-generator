@@ -16,9 +16,10 @@ from PIL import Image, ImageOps, ImageTk
 from pydantic import BaseModel, Field
 
 
-APP_TITLE = "AI商品标题生成器（TEMU/跨境电商）"
-APP_VERSION = "1.0.0"
-DEFAULT_MODEL = "gpt-5.6"
+APP_TITLE = "AI商品标题生成器（火山方舟版）"
+APP_VERSION = "1.1.0"
+DEFAULT_MODEL = "doubao-seed-2-0-pro-260215"
+VOLCANO_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 MAX_IMAGES = 6
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
@@ -112,6 +113,17 @@ def build_user_prompt(settings: dict[str, str | int]) -> str:
 - 标题中不要出现平台名称。
 - 未确认的材质、宝石、成分、数量、品牌、功效和认证不得写入标题。
 - 如果图片不足以确定信息，在 warnings 中明确提示需要人工确认的字段。
+
+严格只输出一个有效的 JSON 对象，不要使用 Markdown 代码块，也不要添加 JSON 以外的文字。
+JSON 必须使用下面的字段结构：
+{{
+  "product_name": "商品概括",
+  "category": "识别品类",
+  "observed_features": ["图片中可直接观察到的特征"],
+  "manual_facts_used": ["实际采用的用户确认信息"],
+  "warnings": ["需要人工确认或可能存在的风险"],
+  "titles": [{{"language": "中文或English", "title": "标题"}}]
+}}
 """.strip()
 
 
@@ -141,7 +153,7 @@ def _extract_json(text: str) -> dict:
     return json.loads(cleaned[start : end + 1])
 
 
-def generate_with_openai(
+def generate_with_volcengine(
     api_key: str,
     model: str,
     image_paths: list[Path],
@@ -150,13 +162,18 @@ def generate_with_openai(
     try:
         from openai import OpenAI
     except ImportError as exc:
-        raise RuntimeError("程序组件不完整，请重新下载最新版软件。") from exc
+        raise RuntimeError("程序组件不完整，请重新下载最新版火山方舟版软件。") from exc
 
-    client = OpenAI(api_key=api_key, timeout=120.0, max_retries=2)
+    client = OpenAI(
+        api_key=api_key,
+        base_url=VOLCANO_BASE_URL,
+        timeout=120.0,
+        max_retries=2,
+    )
     content: list[dict[str, str]] = [
         {"type": "input_text", "text": build_user_prompt(settings)}
     ]
-    detail = str(settings.get("detail", "high"))
+    detail = str(settings.get("detail", "auto"))
     for path in image_paths:
         content.append(
             {
@@ -167,21 +184,18 @@ def generate_with_openai(
         )
 
     try:
-        response = client.responses.parse(
+        response = client.responses.create(
             model=model,
             input=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": content},
             ],
-            text_format=TitleResult,
         )
-        if response.output_parsed is not None:
-            return response.output_parsed
         if response.output_text:
             return TitleResult.model_validate(_extract_json(response.output_text))
         raise RuntimeError("AI没有返回标题，请稍后重试。")
     except AttributeError as exc:
-        raise RuntimeError("OpenAI组件版本过旧，请重新运行启动脚本完成更新。") from exc
+        raise RuntimeError("API兼容组件版本过旧，请重新下载最新版软件。") from exc
 
 
 class TitleGeneratorApp:
@@ -201,16 +215,16 @@ class TitleGeneratorApp:
         self.language_var = tk.StringVar(value="中文")
         self.title_count_var = tk.IntVar(value=8)
         self.max_chars_var = tk.IntVar(value=180)
-        self.detail_var = tk.StringVar(value="high")
+        self.detail_var = tk.StringVar(value="auto")
         self.category_var = tk.StringVar()
         self.material_var = tk.StringVar()
         self.brand_var = tk.StringVar(value="UBERTE")
         self.quantity_var = tk.StringVar()
         self.size_var = tk.StringVar()
         self.status_var = tk.StringVar(value="请选择1至6张同一商品的图片")
-        env_ready = bool(os.getenv("OPENAI_API_KEY", "").strip())
+        env_ready = bool(os.getenv("ARK_API_KEY", "").strip())
         self.key_status_var = tk.StringVar(
-            value="已检测到系统API密钥" if env_ready else "可粘贴API密钥；程序不会保存"
+            value="已检测到火山方舟密钥" if env_ready else "粘贴火山方舟API Key；不会保存"
         )
 
         self._setup_style()
@@ -236,7 +250,7 @@ class TitleGeneratorApp:
         ttk.Label(header, text="AI商品标题生成器", style="Heading.TLabel").pack(side=LEFT)
         ttk.Label(
             header,
-            text="图片识别 + 已确认属性 → TEMU/跨境电商标题",
+            text="火山方舟图片识别 + 已确认属性 → TEMU/跨境电商标题",
             style="Hint.TLabel",
         ).pack(side=LEFT, padx=16, pady=(7, 0))
 
@@ -306,8 +320,8 @@ class TitleGeneratorApp:
         row2.pack(fill=X, pady=(8, 0))
         ttk.Label(row2, text="模型").pack(side=LEFT)
         ttk.Entry(row2, textvariable=self.model_var, width=18).pack(side=LEFT, padx=(5, 16))
-        self._combo(row2, "图片精度", self.detail_var, ["high", "low", "original"], 10)
-        ttk.Label(row2, text="API密钥").pack(side=LEFT, padx=(12, 0))
+        self._combo(row2, "图片精度", self.detail_var, ["auto", "high", "low"], 10)
+        ttk.Label(row2, text="火山API Key").pack(side=LEFT, padx=(12, 0))
         ttk.Entry(row2, textvariable=self.api_key_var, show="●", width=28).pack(side=LEFT, padx=5, fill=X, expand=True)
         ttk.Label(row2, textvariable=self.key_status_var, style="Hint.TLabel").pack(side=LEFT, padx=5)
 
@@ -324,7 +338,7 @@ class TitleGeneratorApp:
         ttk.Button(action_bar, text="导出CSV", command=self.export_csv).pack(side=LEFT)
         ttk.Label(
             action_bar,
-            text="API调用会产生费用；图片会压缩后发送",
+            text="火山方舟调用可能产生费用；图片会压缩后发送",
             style="Hint.TLabel",
         ).pack(side=RIGHT)
 
@@ -445,9 +459,9 @@ class TitleGeneratorApp:
         if not self.image_paths:
             messagebox.showwarning("缺少图片", "请先选择至少1张商品图片。")
             return
-        api_key = self.api_key_var.get().strip() or os.getenv("OPENAI_API_KEY", "").strip()
+        api_key = self.api_key_var.get().strip() or os.getenv("ARK_API_KEY", "").strip()
         if not api_key:
-            messagebox.showwarning("缺少API密钥", "请在API密钥输入框粘贴密钥，或设置 OPENAI_API_KEY。")
+            messagebox.showwarning("缺少API Key", "请粘贴火山方舟API Key，或设置 ARK_API_KEY。")
             return
         model = self.model_var.get().strip()
         if not model:
@@ -467,7 +481,7 @@ class TitleGeneratorApp:
 
     def _generate_worker(self, api_key, model, paths, settings) -> None:
         try:
-            result = generate_with_openai(api_key, model, paths, settings)
+            result = generate_with_volcengine(api_key, model, paths, settings)
         except Exception as exc:
             self.root.after(0, lambda error=exc: self._generation_failed(error))
             return
@@ -497,9 +511,11 @@ class TitleGeneratorApp:
         self.generate_button.configure(state="normal")
         message = str(exc)
         if "401" in message or "api key" in message.lower() or "authentication" in message.lower():
-            message = "API密钥无效或没有权限，请检查密钥后重试。"
+            message = "火山方舟API Key无效或没有权限，请检查密钥和模型权限。"
+        elif "403" in message or "model" in message.lower() and "not" in message.lower():
+            message = "模型未开通或模型ID不正确，请在火山方舟开通模型后重试。"
         elif "429" in message or "rate" in message.lower() or "quota" in message.lower():
-            message = "API额度不足或请求过快，请检查余额或稍后重试。"
+            message = "火山方舟额度不足或请求过快，请检查余额或稍后重试。"
         elif "connection" in message.lower() or "timeout" in message.lower():
             message = "网络连接失败或超时，请检查网络后重试。"
         self.status_var.set("生成失败")
