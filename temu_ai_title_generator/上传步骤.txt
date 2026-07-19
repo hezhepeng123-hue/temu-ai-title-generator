@@ -1,0 +1,11 @@
+把本文件夹内容上传到 GitHub，只需做一次：
+
+1. 打开仓库：https://github.com/hezhepeng123-hue/temu-ai-title-generator
+2. 点击 Add file → Upload files。
+   如果仓库还是空白页，点击页面中的 “uploading an existing file”。
+3. 打开这个解压后的文件夹，按 Ctrl+A 全选里面的内容，再拖进网页。
+   注意：拖进去的是文件夹“里面的内容”，不要只拖最外层文件夹。
+4. 等文件显示完毕，点击绿色 Commit changes。
+5. 上传后告诉 ChatGPT：“上传好了”。
+
+随后 GitHub 会自动构建 Windows APP，完成后可以下载 AI_Title_Generator.exe。
